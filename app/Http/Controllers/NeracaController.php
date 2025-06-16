@@ -9,105 +9,132 @@ class NeracaController extends Controller
 {
     public function index(Request $request)
     {
-         $startDate = $request->start_date ?? now()->startOfMonth()->toDateString();
-        $endDate   = $request->end_date ?? now()->endOfMonth()->toDateString();
+        $startDate = $request->start_date ?? now()->startOfMonth()->toDateString();
+        $endDate = $request->end_date ?? now()->endOfMonth()->toDateString();
 
-        // Ambil data akun dan transaksi hanya jika tanggal ada
-        $accounts = Account::with(['transactions' => function ($query) use ($startDate, $endDate) {
-            if ($startDate && $endDate) {
+        $accounts = Account::with([
+            'transactions' => function ($query) use ($startDate, $endDate) {
                 $query->whereBetween('date', [$startDate, $endDate]);
             }
-        }])->get();
+        ])->get();
 
         $grouped = [
-            'Aktiva'    => [],
+            'Aktiva' => [],
             'Kewajiban' => [],
-            'Ekuitas'   => [],
+            'Ekuitas' => [],
         ];
 
-        foreach ($accounts as $account) {
-            if (!in_array($account->type, ['Aktiva', 'Kewajiban', 'Ekuitas'])) {
-                continue; // Skip Pendapatan dan Beban
-            }
+        $netIncome = 0; // Laba atau Rugi
 
-            $debit  = $account->transactions->sum('debit');
+        foreach ($accounts as $account) {
+            $debit = $account->transactions->sum('debit');
             $credit = $account->transactions->sum('credit');
 
-            // Debug: tampilkan informasi akun dan transaksi
-            logger()->info("Account: {$account->name} ({$account->type})");
-            logger()->info("  Debit: $debit");
-            logger()->info("  Credit: $credit");
-
-            $balance = match ($account->type) {
-                'Aktiva'    => $debit - $credit,
-                'Kewajiban' => $credit - $debit,
-                'Ekuitas'   => $credit - $debit,
-            };
-
-            $grouped[$account->type][] = [
-                'name'    => $account->name,
-                'balance' => $balance,
-            ];
-        }
-
-        // Debug akhir: tampilkan semua hasil grouped
-        logger()->info('Grouped Result:', $grouped);
-
-        return view('neraca.index', [
-            'grouped'   => [
-                'asset'     => $grouped['Aktiva'],
-                'liability' => $grouped['Kewajiban'],
-                'equity'    => $grouped['Ekuitas'],
-            ],
-            'startDate' => $startDate,
-            'endDate'   => $endDate,
-        ]);
-    }
-    public function print(Request $request)
-    {
-        $startDate = $request->input('start_date');
-        $endDate   = $request->input('end_date');
-
-        $accounts = Account::with(['transactions' => function ($query) use ($startDate, $endDate) {
-            if ($startDate && $endDate) {
-                $query->whereBetween('date', [$startDate, $endDate]);
+            if ($account->type === 'Pendapatan') {
+                $netIncome += ($credit - $debit); // Pendapatan = kredit - debit
+                continue;
             }
-        }])->get();
 
-        $grouped = [
-            'Aktiva'    => [],
-            'Kewajiban' => [],
-            'Ekuitas'   => [],
-        ];
+            if ($account->type === 'Beban') {
+                $netIncome -= ($debit - $credit); // Beban = debit - kredit
+                continue;
+            }
 
-        foreach ($accounts as $account) {
             if (!in_array($account->type, ['Aktiva', 'Kewajiban', 'Ekuitas'])) {
                 continue;
             }
 
-            $debit  = $account->transactions->sum('debit');
-            $credit = $account->transactions->sum('credit');
-
             $balance = match ($account->type) {
-                'Aktiva'    => $debit - $credit,
+                'Aktiva' => $debit - $credit,
                 'Kewajiban' => $credit - $debit,
-                'Ekuitas'   => $credit - $debit,
+                'Ekuitas' => $credit - $debit,
             };
 
             $grouped[$account->type][] = [
-                'name'    => $account->name,
+                'name' => $account->name,
                 'balance' => $balance,
             ];
         }
 
-        return view('neraca.print', [
-            'grouped'   => [
-                'asset'     => $grouped['Aktiva'],
+        // Tambahkan Laba Ditahan (Laba/Rugi Tahun Berjalan) ke Ekuitas
+        $grouped['Ekuitas'][] = [
+            'name' => 'Laba Tahun Berjalan',
+            'balance' => $netIncome,
+        ];
+
+        return view('neraca.index', [
+            'grouped' => [
+                'asset' => $grouped['Aktiva'],
                 'liability' => $grouped['Kewajiban'],
-                'equity'    => $grouped['Ekuitas'],
+                'equity' => $grouped['Ekuitas'],
             ],
             'startDate' => $startDate,
-            'endDate'   => $endDate,
+            'endDate' => $endDate,
+        ]);
+    }
+
+    public function print(Request $request)
+    {
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+
+        $accounts = Account::with([
+            'transactions' => function ($query) use ($startDate, $endDate) {
+                $query->whereBetween('date', [$startDate, $endDate]);
+            }
+        ])->get();
+
+        $grouped = [
+            'Aktiva' => [],
+            'Kewajiban' => [],
+            'Ekuitas' => [],
+        ];
+
+        $netIncome = 0;
+
+        foreach ($accounts as $account) {
+            $debit = $account->transactions->sum('debit');
+            $credit = $account->transactions->sum('credit');
+
+            if ($account->type === 'Pendapatan') {
+                $netIncome += ($credit - $debit);
+                continue;
+            }
+
+            if ($account->type === 'Beban') {
+                $netIncome -= ($debit - $credit);
+                continue;
+            }
+
+            if (!in_array($account->type, ['Aktiva', 'Kewajiban', 'Ekuitas'])) {
+                continue;
+            }
+
+            $balance = match ($account->type) {
+                'Aktiva' => $debit - $credit,
+                'Kewajiban' => $credit - $debit,
+                'Ekuitas' => $credit - $debit,
+            };
+
+            $grouped[$account->type][] = [
+                'name' => $account->name,
+                'balance' => $balance,
+            ];
+        }
+
+        $grouped['Ekuitas'][] = [
+            'name' => 'Laba Tahun Berjalan',
+            'balance' => $netIncome,
+        ];
+
+        return view('neraca.print', [
+            'grouped' => [
+                'asset' => $grouped['Aktiva'],
+                'liability' => $grouped['Kewajiban'],
+                'equity' => $grouped['Ekuitas'],
+            ],
+            'startDate' => $startDate,
+            'endDate' => $endDate,
         ]);
     }
 }

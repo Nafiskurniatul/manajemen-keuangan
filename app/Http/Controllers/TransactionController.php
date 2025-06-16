@@ -154,7 +154,11 @@ class TransactionController extends Controller
         if ($role === 'manajer') {
             return redirect()->route('transactions.index')->with('error', 'Tidak Memiliki Akses');
         }
-        $transaction->delete();
+
+        // Hapus semua transaksi dengan reference_id yang sama
+        Transaction::where('reference_id', $transaction->reference_id)->delete();
+
         return back()->with('success', 'Transaksi berhasil dihapus.');
     }
+
 }
